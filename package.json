@@ -1,0 +1,16 @@
+{
+  "name": "savetv",
+  "description": "Downloads your save.tv recordings",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "array.prototype.find": "x.x",
+    "node-find-files": "x.x",
+    "nedb": "^0.10.6",
+    "tough-cookie": "^0.12.1",
+    "sequence": "^3.0.0",
+    "es6-promise": "^1.0.0",
+    "forallasync": "^1.0.2",
+    "stdio": "^0.1.6"
+  }
+}
