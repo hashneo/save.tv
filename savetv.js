@@ -49,7 +49,7 @@ function call(url, method, data, type, success, error){
 	    port : 443,
 	    path : url,
 	    method : method,
-	    headers : { "accept" : "test/html" }
+	    headers : { "accept" : "text/html" }
 	};
 
 	if ( data === undefined )
