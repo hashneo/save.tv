@@ -32,12 +32,25 @@ if ( ops.threads ){
 
 function download(url, complete) {
 	var request = http.get(url, function(res) {
+		if ( res.headers['content-disposition'] === undefined ){
+			console.log('url => \'' +url + '\' didn\'t return content-disposition in the header');
+			console.log('STATUS: ' + res.statusCode);
+			console.log('HEADERS: ' + JSON.stringify(res.headers));
+			res.setEncoding('utf8');
+			res.on('data', function (chunk) {
+			  console.log('BODY: ' + chunk);
+		 	});
+		 	res.on('end', function() {
+				complete(false);
+  			});
+			return;
+		}
 		var dest = res.headers['content-disposition'].split(';')[1].replace(' filename=','');
 		var tmp = dest + '.tmp';
 		var file = fs.createWriteStream(tmp);
 	    res.pipe(file);
 	    file.on('finish', function() {
-	      	file.close(complete);
+	      	file.close( function(){ complete(true);} );
 	      	fs.rename(tmp,dest);
     	});
 	});
@@ -112,14 +125,17 @@ function processArchive( complete, entry, i ){
     }).then( function(data){
     	var recordingData = JSON.parse(data);
 
-    	var dlUrl = recordingData.ARRVIDEOURL[2];
-		download( dlUrl, function() { 
-			db.insert(entry, function (err, newDoc) {
-				console.log('marked recording => ' + entry.ITELECASTID + ', complete');
-				complete();
+		if ( recordingData.ARRVIDEOURL[1] === 'OK' ){
+			var dlUrl = recordingData.ARRVIDEOURL[2];
+			download( dlUrl, function(completed) {
+				if ( completed ){
+					db.insert(entry, function (err, newDoc) {
+						console.log('marked recording => ' + entry.ITELECASTID + ', complete');
+						complete();
+					});
+				}
 			});
-		});
-
+		}
     	//console.log(data);
     }).then( function(){
    });
@@ -139,7 +155,7 @@ function processList( ){
 		//set our primary key for the db
 		entry['_id'] = entry.ITELECASTID;
 
-		// Finding all planets in the solar system
+		// Finding all shows with the same id
 		db.find({ _id: entry['_id'] }, function (err, docs) {
 			// nothing found
 			if ( docs.length == 0 ){
