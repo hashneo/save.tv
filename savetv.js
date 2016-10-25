@@ -69,7 +69,7 @@ function call(url, method, data, type, success, error){
 		data = null;
 
 	if ( data !== null ){		
-		options.headers['Content-Type'] = type,
+		options.headers['Content-Type'] = type;
         options.headers['Content-Length'] = data.length;
 	}
 
@@ -180,7 +180,10 @@ function processList( ){
 function loadList(){
 
 	function loadListPage( pgNum, onComplete ){
-		call( '/STV/M/obj/archive/JSON/VideoArchiveApi.cfm?iEntriesPerPage=10&iCurrentPage=' + pgNum, 'GET', null, null, function(data){
+		var startDate = new Date( (new Date()).setDate( (new Date()).getDate() - 30 ) ).toISOString().slice(0,10)
+		var endDate = new Date().toISOString().slice(0,10)
+
+		call( '/STV/M/obj/archive/JSON/VideoArchiveApi.cfm?iEntriesPerPage=10&iCurrentPage=' + pgNum + '&dStartdate=' + startDate + '&dEnddate=' + endDate, 'GET', null, null, function(data){
 			var jsonData = JSON.parse(data);
 			Entries = Entries.concat(jsonData.ARRVIDEOARCHIVEENTRIES);
 			if ( jsonData.ICURRENTPAGE < jsonData.ITOTALPAGES ){
