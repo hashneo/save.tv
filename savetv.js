@@ -121,6 +121,15 @@ function call(url, method, data, type, success, error){
 function processArchive( complete, entry, i ){
 	console.log('processing recording => ' + entry.ITELECASTID );
 	new Promise( function (resolve, reject) {
+
+        entry.ARRALLOWDDOWNLOADFORMATS.forEach( function(format){
+            if ( format.SNAME === 'H.264 SD' && !entry.IRECORDINGFORMATID)
+                entry.IRECORDINGFORMATID = format.RECORDINGFORMATID;
+
+            if ( format.SNAME === 'H.264 HD')
+                entry.IRECORDINGFORMATID = format.RECORDINGFORMATID;
+        });
+
     	call( '/STV/M/obj/cRecordOrder/croGetDownloadUrl.cfm?TelecastId=' + entry.ITELECASTID + '&iFormat=' + entry.IRECORDINGFORMATID + '&bAdFree=false', 'GET', null, null, resolve, reject );
     }).then( function(data){
     	var recordingData = JSON.parse(data);
