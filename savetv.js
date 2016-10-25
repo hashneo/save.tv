@@ -56,13 +56,13 @@ function download(url, complete) {
 	});
 }
 
-function call(url, method, data, type, success, error){
+function call(url, method, data, type, accept, success, error){
 	var options = {
 	    host : 'www.save.tv',
 	    port : 443,
 	    path : url,
 	    method : method,
-	    headers : { "accept" : "text/html" }
+	    headers : { "accept" : accept || "text/html"}
 	};
 
 	if ( data === undefined )
@@ -130,12 +130,12 @@ function processArchive( complete, entry, i ){
                 entry.IRECORDINGFORMATID = format.RECORDINGFORMATID;
         });
 
-    	call( '/STV/M/obj/cRecordOrder/croGetDownloadUrl.cfm?TelecastId=' + entry.ITELECASTID + '&iFormat=' + entry.IRECORDINGFORMATID + '&bAdFree=false', 'GET', null, null, resolve, reject );
+    	call( '/STV/M/obj/cRecordOrder/croGetDownloadUrl2.cfm?TelecastId=' + entry.ITELECASTID + '&iFormat=' + entry.IRECORDINGFORMATID + '&bAdFree=false', 'GET', null, null, 'application/json', resolve, reject );
     }).then( function(data){
     	var recordingData = JSON.parse(data);
 
-		if ( recordingData.ARRVIDEOURL[1] === 'OK' ){
-			var dlUrl = recordingData.ARRVIDEOURL[2];
+		if ( recordingData.SUCCESS ){
+			var dlUrl = recordingData.DOWNLOADURL;
 			download( dlUrl, function(completed) {
 				if ( completed ){
 					db.insert(entry, function (err, newDoc) {
@@ -192,7 +192,7 @@ function loadList(){
 		var startDate = new Date( (new Date()).setDate( (new Date()).getDate() - 30 ) ).toISOString().slice(0,10)
 		var endDate = new Date().toISOString().slice(0,10)
 
-		call( '/STV/M/obj/archive/JSON/VideoArchiveApi.cfm?iEntriesPerPage=10&iCurrentPage=' + pgNum + '&dStartdate=' + startDate + '&dEnddate=' + endDate, 'GET', null, null, function(data){
+		call( '/STV/M/obj/archive/JSON/VideoArchiveApi.cfm?iEntriesPerPage=10&iCurrentPage=' + pgNum + '&dStartdate=' + startDate + '&dEnddate=' + endDate, 'GET', null, null, null, function(data){
 			var jsonData = JSON.parse(data);
 			Entries = Entries.concat(jsonData.ARRVIDEOARCHIVEENTRIES);
 			if ( jsonData.ICURRENTPAGE < jsonData.ITOTALPAGES ){
@@ -212,7 +212,7 @@ function logout( success ){
 }
 
 function run( user, password, success ){
-	call( '/STV/M/Index.cfm?sk=PREMIUM', 'POST', 'sUsername=' + user + '&sPassword=' + password + '&value=Login', ' application/x-www-form-urlencoded', loadList );
+	call( '/STV/M/Index.cfm?sk=PREMIUM', 'POST', 'sUsername=' + user + '&sPassword=' + password + '&value=Login', ' application/x-www-form-urlencoded', null, loadList );
 }
 
 run( ops.user, ops.password, function(){} );
