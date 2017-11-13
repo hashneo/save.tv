@@ -1,5 +1,6 @@
 node_modules
 .idea
-data.db
 download
-lastrun.txt
+drop
+*.db
+*.scpt

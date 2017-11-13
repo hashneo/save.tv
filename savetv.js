@@ -1,24 +1,40 @@
-var Datastore = require('nedb'), 
-	db = new Datastore({ filename: './data.db', autoload: true });
+const Datastore = require('nedb'),
+	  db = new Datastore({ filename: './download/data.db', autoload: true });
 
-var fs = require('fs');
+const fs = require('fs-extra');
+const path = require('path');
 
-var  http = require('http'),
- 	 https = require('https')
+const  http = require('http'),
+ 	 https = require('https');
 
-var tough = require('tough-cookie'),
-	Cookie = tough.Cookie;
+const keepAliveAgent = {
+    http: new http.Agent({ keepAlive: true }),
+    https: new https.Agent({ keepAlive: true })
+};
 
-var cookiejar = new tough.CookieJar();
+const forAllAsync = exports.forAllAsync || require('forallasync').forAllAsync;
 
-var Promise = require('es6-promise').Promise;
+var maxCallsAtOnce = 1;
 
-var forAllAsync = exports.forAllAsync || require('forallasync').forAllAsync, 
-	maxCallsAtOnce = 3;
+const stdio = require('stdio');
 
-var stdio = require('stdio');
+var request = require('request');
 
-var ops = stdio.getopt({
+request = request.defaults({jar: true});
+
+var ProgressBar;
+
+if (!process.env.DEBUG) {
+    ProgressBar = require('ascii-progress');
+}
+
+const url = require('url');
+
+//require('request-debug')(request);
+
+const progress = require('request-progress');
+
+const ops = stdio.getopt({
     'user': {key: 'u', args: 1, mandatory: true, description: 'Save.TV username'},
     'password': {key: 'p', args: 1, mandatory: true, description: 'Password'},
     'threads': {key: 't', args: 1 , description: 'How many simultaneous shows to download (max 3)'},
@@ -26,193 +42,299 @@ var ops = stdio.getopt({
 });
 
 if ( ops.threads ){
-	maxCallsAtOnce = ops.args[2];
-	if ( maxCallsAtOnce <= 0 || maxCallsAtOnce > 3 ) maxCallsAtOnce = 3;
+	maxCallsAtOnce = ops.threads;
+	if ( maxCallsAtOnce <= 0 || maxCallsAtOnce > 6 ) maxCallsAtOnce = 1;
 }
 
-function download(url, complete) {
-	var request = http.get(url, function(res) {
-		if ( res.headers['content-disposition'] === undefined ){
-			console.log('url => \'' +url + '\' didn\'t return content-disposition in the header');
-			console.log('STATUS: ' + res.statusCode);
-			console.log('HEADERS: ' + JSON.stringify(res.headers));
-			res.setEncoding('utf8');
-			res.on('data', function (chunk) {
-			  console.log('BODY: ' + chunk);
-		 	});
-		 	res.on('end', function() {
-				complete(false);
-  			});
-			return;
-		}
-		var dest = res.headers['content-disposition'].split(';')[1].replace(' filename=','');
-		var tmp = dest + '.tmp';
-		var file = fs.createWriteStream(tmp);
-	    res.pipe(file);
-	    file.on('finish', function() {
-	      	file.close( function(){ complete(true);} );
-	      	fs.rename(tmp,dest);
-    	});
-	});
+let pbars = {};
+
+function download(title, href) {
+
+    return new Promise( (fulfill, reject) =>{
+
+        let dest;
+        let file;
+        let tmp;
+
+        let fname;
+
+        let r;
+
+        let state = { size : { transferred : 0, total : 0 } };
+
+        let wpath = path.join( __dirname, 'download' );
+        fs.ensureDirSync(wpath);
+
+        const resourceUrl = url.parse( href );
+
+        let re = /http:\/\/.*\.save\.tv\/(.*)\/\?.*/;
+
+        let m = href.match(re);
+
+        if (!m){
+            return reject( new Error('invalid download url ->' + href))
+        }
+
+        tmp = path.join( wpath, m[1] + '.tmp' );
+
+        let s;
+
+        if ( fs.existsSync(tmp) ) {
+            s = fs.statSync( tmp );
+            state.size.transferred = s.size;
+            state.size.total = state.size.transferred;
+            file = fs.createWriteStream(tmp, { flags: 'r+', start: s.size });
+        } else {
+            file = fs.createWriteStream(tmp);
+        }
+
+        let options = {
+            url: href,
+            gzip: true,
+            timeout: 30000,
+            agent: keepAliveAgent.http
+        };
+
+        if ( state.size.transferred > 0 ) {
+            options['headers'] = {
+                Range : 'bytes=' + state.size.transferred + '-'
+            }
+        }
+
+        try {
+            request.get(options)
+                .on('abort', function () {
+                    console.log('socket aborted');
+                    reject('socket aborted');
+                })
+                .on('timeout', function () {
+                    console.log('socket timeout');
+                    reject('socket timeout');
+                })
+                .on('error', function (err) {
+                    console.log(err);
+                    reject(err);
+                })
+                .on('response', function (resp) {
+                    if (resp.headers['content-disposition'] === undefined) {
+                        return reject(new Error('missing content-disposition'));
+                    }
+                    fname = resp.headers['content-disposition'].split(';')[1].replace(' filename=', '');
+                    state.size.total += parseInt(resp.headers['content-length']);
+                    dest = path.join(wpath, fname);
+                    resp.pipe(file);
+                })
+                .on('data', function (data) {
+                    state.size.transferred += data.length;
+                    let a = (state.size.transferred / 1048576).toFixed(2);
+                    let b = (state.size.total / 1048576).toFixed(2);
+
+                    process.stdout.write(`downloading ${fname} ${a}/${b} MB\r`);
+                })
+                .on('end', function () {
+                    process.stdout.write('\n');
+                    file.end();
+                    fs.renameSync(tmp, dest);
+                    fulfill(dest);
+                });
+        }
+        catch(err){
+            reject(err);
+        }
+    });
 }
 
-function call(url, method, data, type, accept, success, error){
-	var options = {
-	    host : 'www.save.tv',
-	    port : 443,
-	    path : url,
-	    method : method,
-	    headers : { "accept" : accept || "text/html"}
-	};
+function get(url){
+    return call( url, 'GET', null, null, 'application/json' );
+}
 
-	if ( data === undefined )
-		data = null;
+function post(url, data, type, accept){
+    return call( url, 'POST', data, type, accept );
+}
 
-	if ( data !== null ){		
-		options.headers['Content-Type'] = type;
-        options.headers['Content-Length'] = data.length;
-	}
 
-	cookiejar.getCookies('https://www.save.tv' + url ,function(err,cookies) {
-	  options.headers['cookie'] = cookies.join('; ');
-	});
+function call(url, method, data, type, accept){
 
-	console.log( options.path );
+    return new Promise( ( fulfill, reject ) => {
 
-	// do the request
-	var req = https.request(options, function(res) {
-		var data = '';
-	    //console.log("statusCode: ", res.statusCode);
-	  	//console.log("headers: ", res.headers);
+        let options = {
+            url  : 'https://www.save.tv' + url,
+            method : method,
+            encoding : null,
+            headers : {
+                'accept' : accept || 'text/html',
+                'User-Agent' : 'Mozilla/5.0'
+            },
+            timeout : 90000,
+            agent : keepAliveAgent.https,
+            followRedirect: false
+        };
 
-		if (res.headers['set-cookie'] instanceof Array)
-			res.headers['set-cookie'].map(function (c) { cookiejar.setCookieSync( c, 'https://www.save.tv' + url ); });
+        if ( data === undefined )
+            data = null;
 
-	    res.on('data', function(block) {
-	        data += block;
-	    });
+        if ( data !== null ){
+            if ( type === 'application/json' )
+                data = JSON.stringify(data);
 
-	    res.on('end',function(){
-	    	try{
-	    		if ( success !== undefined )
-	    			success(data);		    		
-	    	}
-	    	catch(e){
-	    		console.log(options);
-	    		console.log(e);
-	    		if ( error !== undefined ){
-	    			error([options, e]);
-	    		}
-	    	}
-    	});
-	});
+            options['body'] = data;
+            options['headers']['content-type'] = type;
+        }
 
-	if ( data !== null ){		
-		req.write(data);
-	}
+        request(options, (err, response, body) => {
 
-	req.end();
-	req.on('error', function(e) {
-	    console.error(e);
-	});		
+            //console.log(body.toString('utf8'));
+            if ( err ) {
+                reject(err);
+                return;
+            }
+
+            if ( response.statusCode === 401 ){
+                reject(err);
+                return;
+            }
+
+            fulfill( body );
+        });
+    });
 }
 
 
 function processArchive( complete, entry, i ){
+
 	console.log('processing recording => ' + entry.ITELECASTID );
-	new Promise( function (resolve, reject) {
 
-        entry.ARRALLOWDDOWNLOADFORMATS.forEach( function(format){
-            if ( format.SNAME === 'H.264 SD' && !entry.IRECORDINGFORMATID)
-                entry.IRECORDINGFORMATID = format.RECORDINGFORMATID;
+    entry.ARRALLOWDDOWNLOADFORMATS.forEach(function (format) {
+        if (format.SNAME === 'H.264 SD' && !entry.IRECORDINGFORMATID)
+            entry.IRECORDINGFORMATID = format.RECORDINGFORMATID;
 
-            if ( format.SNAME === 'H.264 HD')
-                entry.IRECORDINGFORMATID = format.RECORDINGFORMATID;
+        if (format.SNAME === 'H.264 HD')
+            entry.IRECORDINGFORMATID = format.RECORDINGFORMATID;
+    });
+
+    get('/STV/M/obj/cRecordOrder/croGetDownloadUrl2.cfm?TelecastId=' + entry.ITELECASTID + '&iFormat=' + entry.IRECORDINGFORMATID + '&bAdFree=false', 'application/json')
+        .then((data) => {
+            let recordingData = JSON.parse(data);
+
+            if (recordingData.SUCCESS) {
+                let dlUrl = recordingData.DOWNLOADURL;
+
+                download(entry.ITELECASTID, dlUrl)
+                    .then ( (dest) => {
+                        fs.writeJson(dest + '.meta', entry);
+                        db.insert(entry, function (err, newDoc) {
+                            console.log('marked recording => ' + entry.ITELECASTID + ', complete');
+                            complete();
+                        });
+                    })
+                    .catch( (err) =>{
+                        console.log('error downloading recording => ' + entry.ITELECASTID );
+                        console.log(err);
+                        complete();
+                    })
+            }
         });
-
-    	call( '/STV/M/obj/cRecordOrder/croGetDownloadUrl2.cfm?TelecastId=' + entry.ITELECASTID + '&iFormat=' + entry.IRECORDINGFORMATID + '&bAdFree=false', 'GET', null, null, 'application/json', resolve, reject );
-    }).then( function(data){
-    	var recordingData = JSON.parse(data);
-
-		if ( recordingData.SUCCESS ){
-			var dlUrl = recordingData.DOWNLOADURL;
-			download( dlUrl, function(completed) {
-				if ( completed ){
-					db.insert(entry, function (err, newDoc) {
-						console.log('marked recording => ' + entry.ITELECASTID + ', complete');
-						complete();
-					});
-				}
-			});
-		}
-    	//console.log(data);
-    }).then( function(){
-   });
 }
 
-var Entries = [];
+function processList( entries ){
 
-function processList( ){
-	//console.log(data);
+	return new Promise( ( fulfill, reject) => {
+        let processList = [];
 
-	var processList = [];
+	    try {
+            function searchDatabase(complete, entry, i) {
+                if (entry.STRTELECASTENTRY !== undefined)
+                    entry = entry.STRTELECASTENTRY;
 
-	function searchDatabase( complete, entry, i ){
-		if ( entry.STRTELECASTENTRY !== undefined )
-			entry = entry.STRTELECASTENTRY;
+                //set our primary key for the db
+                entry['_id'] = entry.ITELECASTID;
 
-		//set our primary key for the db
-		entry['_id'] = entry.ITELECASTID;
+                // Finding all shows with the same id
+                db.find({_id: entry['_id']}, function (err, docs) {
+                    // nothing found
+                    if (docs.length == 0) {
+                        console.log('adding new recording => ' + entry.ITELECASTID + ', title => ' + entry.STITLE);
+                        processList.push(entry);
+                    }
+                    complete();
+                });
+            }
 
-		// Finding all shows with the same id
-		db.find({ _id: entry['_id'] }, function (err, docs) {
-			// nothing found
-			if ( docs.length == 0 ){
-				console.log('adding new recording => ' + entry.ITELECASTID + ', title => ' + entry.STITLE );
-				processList.push( entry );
-			}
-			complete();
-		});		
-	}
+            forAllAsync(entries, searchDatabase, 10).then(function () {
+                forAllAsync(processList, processArchive, maxCallsAtOnce).then(function () {
+                    fulfill();
+                });
+            });
+        } catch( err ){
+           reject(err);
+        }
 
-	forAllAsync( Entries, searchDatabase, 10 ).then(function () {
-		forAllAsync( processList, processArchive, maxCallsAtOnce ).then(function () {
-	    	console.log('did all the things');
-	    	// Logout
-	    	logout();
-		});	
-	});
-
+    });
 }
 
 
 function loadList(){
 
-	function loadListPage( pgNum, onComplete ){
-		var startDate = new Date( (new Date()).setDate( (new Date()).getDate() - 30 ) ).toISOString().slice(0,10)
-		var endDate = new Date().toISOString().slice(0,10)
+    return new Promise( (fulfill, reject) =>{
 
-		call( '/STV/M/obj/archive/JSON/VideoArchiveApi.cfm?iEntriesPerPage=10&iCurrentPage=' + pgNum + '&dStartdate=' + startDate + '&dEnddate=' + endDate, 'GET', null, null, null, function(data){
-			var jsonData = JSON.parse(data);
-			Entries = Entries.concat(jsonData.ARRVIDEOARCHIVEENTRIES);
-			if ( jsonData.ICURRENTPAGE < jsonData.ITOTALPAGES ){
-				loadListPage( pgNum + 1, onComplete )
-			} else {
-				onComplete();
-			}
-		}, function(e){ throw e }  );
-	}
+        let entries = [];
 
-	loadListPage( 1, function(){ processList() } );
+        function loadListPage( pgNum ){
+
+            return new Promise( (fulfill, reject) =>{
+
+                let startDate = new Date( (new Date()).setDate( (new Date()).getDate() - 30 ) ).toISOString().slice(0,10);
+                let endDate = new Date().toISOString().slice(0,10);
+
+                get( '/STV/M/obj/archive/JSON/VideoArchiveApi.cfm?iEntriesPerPage=10&iCurrentPage=' + pgNum + '&dStartdate=' + startDate + '&dEnddate=' + endDate )
+                    .then( ( data ) => {
+                        data = JSON.parse(data);
+                        entries = entries.concat(data.ARRVIDEOARCHIVEENTRIES);
+                        if ( data.ICURRENTPAGE < data.ITOTALPAGES ){
+                            loadListPage( pgNum + 1 )
+                                .then( () =>{
+                                    fulfill(entries);
+                                });
+                        } else {
+                            fulfill(entries);
+                        }
+                    })
+                    .catch( (err) =>{
+                       reject(err);
+                    });
+            });
+        }
+
+        loadListPage(1)
+        .then( (entries) => {
+            fulfill( entries );
+        })
+        .catch( (err) => {
+            reject(err);
+        })
+    });
 }
 
-function logout( success ){
-	call( '/STV/M/obj/user/usLogout.cfm', 'GET' );
-	sessionCookie = null;
+function logout(){
+	get( '/STV/M/obj/user/usLogout.cfm' );
 }
 
-function run( user, password, success ){
-	call( '/STV/M/Index.cfm?sk=PREMIUM', 'POST', 'sUsername=' + user + '&sPassword=' + password + '&value=Login', ' application/x-www-form-urlencoded', null, loadList );
+function run( user, password ){
+	post( '/STV/M/Index.cfm?sk=PREMIUM', 'sUsername=' + user + '&sPassword=' + password + '&value=Login', ' application/x-www-form-urlencoded' )
+        .then( () => {
+            return loadList();
+        })
+        .then( (entries) =>{
+            return processList(entries);
+        })
+        .then( () => {
+            logout();
+        });
 }
 
-run( ops.user, ops.password, function(){} );
+process.on('unhandledRejection', (reason, p) => {
+    console.log('Unhandled Rejection at: Promise', p, 'reason:', reason);
+    process.exit(1);
+});
+
+run( ops.user, ops.password );
