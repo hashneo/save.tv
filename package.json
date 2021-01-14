@@ -6,7 +6,7 @@
   "dependencies": {
     "array.prototype.find": "x.x",
     "ascii-progress": "^1.0.5",
-    "es6-promise": "^1.0.0",
+    "es6-promise": "^4.2.8",
     "forallasync": "^1.0.2",
     "fs-extra": "^3.0.1",
     "nedb": "^0.11.0",
