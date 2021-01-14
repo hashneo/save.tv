@@ -9,7 +9,7 @@
     "es6-promise": "^1.0.0",
     "forallasync": "^1.0.2",
     "fs-extra": "^3.0.1",
-    "nedb": "^0.11.0",
+    "nedb": "^1.8.0",
     "node-find-files": "x.x",
     "progress": "^2.0.0",
     "progress-stream": "^2.0.0",
