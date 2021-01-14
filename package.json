@@ -8,7 +8,7 @@
     "ascii-progress": "^1.0.5",
     "es6-promise": "^1.0.0",
     "forallasync": "^1.0.2",
-    "fs-extra": "^3.0.1",
+    "fs-extra": "^9.0.1",
     "nedb": "^0.11.0",
     "node-find-files": "x.x",
     "progress": "^2.0.0",
